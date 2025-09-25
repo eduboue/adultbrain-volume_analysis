@@ -6,8 +6,8 @@ from tqdm import tqdm
 
 class AdultBrain:
     """
-    The AdultBrain class represents a segmented adult brain volume presumed to have 
-    been imaged from Light Sheet methods. The class provides methods to load, analyze, 
+    The AdultBrain class represents a segmented adult brain volume presumed to have
+    been imaged from Light Sheet methods. The class provides methods to load, analyze,
     and export per-region voxel or volume statistics.
 
     This class is designed for neuroimaging datasets stored in `.nii.gz` format
@@ -20,12 +20,12 @@ class AdultBrain:
         3D NumPy array containing segmentation labels. This is the main image file,
         where (z,x,y) represents the number of slices (z) and the x,y dimensions (x,y)
         per slice.
-        
+
     _volumes : pd.Series | None
         Cached Series containing per-region voxel or volume statistics.
-        This Series object will be filled in upon execution of 
+        This Series object will be filled in upon execution of
         compute_volumes() method. Otherwise set to None.
-        
+
     _voxel_conversion : tuple[float, float, float] | None
         Voxel size along (x, y, z) in physical units (e.g., millimeters).
     """
@@ -47,9 +47,35 @@ class AdultBrain:
         if stack.ndim != 3:
             raise ValueError(f"Expected a 3D array, got shape {stack.shape}")
         self.stack: NDArray[np.float64] = stack
-        self._volumes: pd.Series | None = None 
+        self._volumes: pd.Series | None = None
         self._voxel_conversion: tuple[float, float, float] | None = None
-    
+
+    def __str__(self) -> None:
+        """
+        Returns a string with the state of the object.
+        Produces the number of dimensions, whether the voxel conversion ratios
+        are set and if yes, what they are set to, and whether
+        volumes have been computed.
+        """
+        lines = []
+        lines.append(f"Stack is a {self.stack.ndim}D array")
+
+        if self.voxel_conversion is None:
+            lines.append("Voxel Conversion ratios are not set")
+        else:
+            lines.append(f"Voxel Conversion ratios set to: {self._voxel_conversion}")
+
+        if self._volumes is None:
+            lines.append("Volumes not yet computed")
+        else:
+            lines.append("Volumes computed, access using obj.volumes")
+
+        return "\n".join(lines)
+
+    @property
+    def volumes(self) -> pd.Series:
+        return self._volumes
+
     @property
     def dimensions(self) -> tuple[int, ...]:
         """
@@ -61,7 +87,7 @@ class AdultBrain:
             Shape of the stack as (m, n, p).
         """
         return np.shape(self.stack)
-    
+
     @property
     def region_labels(self) -> tuple[int, ...]:
         """
@@ -73,7 +99,7 @@ class AdultBrain:
             Unique region IDs in the dataset.
         """
         return set(self.stack.flatten().tolist())
-    
+
     @property
     def voxel_conversion(self) -> tuple[float, float, float]:
         """
@@ -143,22 +169,30 @@ class AdultBrain:
         The results are cached in `self._volumes` for later use.
         """
         if self.voxel_conversion is None:
-            print("No Voxel Conversion given. Performing voxel measures in pixels.")
+            print("No Voxel Conversion given. Performing voxel measures in voxels (counts).")
+
         region_labels: set = self.region_labels
         dimensions: tuple[int, ...] = self.dimensions
-        
+
         index: list = [f"Region {int(i)}" for i in region_labels]
-        SO: pd.Series = pd.Series(np.zeros(len(index)),index=index,name="Voxel Measures")
+        SO: pd.Series = pd.Series(np.zeros(len(index)), index=index, name="Voxel Measures")
 
         stack_container: NDArray[np.float64] = np.zeros(dimensions[0])
-        for region in tqdm(region_labels, desc="Regions", unit="region",leave=False):
+        for region in tqdm(region_labels, desc="Regions", unit="region", leave=False):
             for slice_num, slice_2d in enumerate(self.stack):
                 stack_container[slice_num] = np.sum(slice_2d.flatten() == region)
-            SO[f"Region {np.int16(region)}"] = stack_container.sum()
-        
-        self._volumes = SO    
+            voxel_count = stack_container.sum()
+
+            # If conversion is given, multiply by voxel volume
+            if self.voxel_conversion is not None:
+                voxel_volume = np.prod(self.voxel_conversion)  # sx * sy * sz
+                SO[f"Region {np.int16(region)}"] = voxel_count * voxel_volume
+            else:
+                SO[f"Region {np.int16(region)}"] = voxel_count
+
+        self._volumes = SO
         return SO
-    
+
     def write_regions(self, output_file_path: str) -> None:
         """
         Save the computed per-region volumes to a CSV file.
@@ -177,4 +211,3 @@ class AdultBrain:
             raise RuntimeError("No region volumes computed yet. Call compute_volumes() first and then save to file.")
         self._volumes.to_csv(output_file_path)
         print("Computed volumes save to: ", output_file_path)
-        
